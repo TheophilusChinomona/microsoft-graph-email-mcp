@@ -1,0 +1,65 @@
+"""
+Microsoft Graph Email MCP Server -- Configuration
+"""
+
+import os
+import sys
+from pathlib import Path
+
+# Azure AD / Entra ID
+TENANT_ID = os.environ.get("MS_TENANT_ID", "common")
+CLIENT_ID = os.environ.get("MS_CLIENT_ID", "")
+CLIENT_SECRET = os.environ.get("MS_CLIENT_SECRET", "")
+REDIRECT_URI = os.environ.get("MS_REDIRECT_URI", "http://localhost:8721/callback")
+
+# Scopes
+SCOPES = os.environ.get(
+    "MS_SCOPES",
+    "Mail.Read Mail.Send Mail.ReadWrite User.Read offline_access"
+).split()
+
+# Graph API
+GRAPH_BASE_URL = os.environ.get("GRAPH_BASE_URL", "https://graph.microsoft.com/v1.0")
+
+# Token cache
+_default_cache = str(Path(__file__).parent / ".auth" / "tokens.json")
+TOKEN_CACHE_PATH = os.environ.get("TOKEN_CACHE_PATH", _default_cache)
+
+# Security settings
+MAX_ATTACHMENT_SIZE = int(os.environ.get("GRAPH_MAX_ATTACHMENT_SIZE", 10 * 1024 * 1024))  # 10MB
+RATE_LIMIT_RETRIES = int(os.environ.get("GRAPH_RATE_LIMIT_RETRIES", 3))
+RATE_LIMIT_BACKOFF_BASE = 2
+
+# OAuth2 endpoints
+AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
+AUTHORIZE_URL = f"{AUTHORITY}/oauth2/v2.0/authorize"
+TOKEN_URL = f"{AUTHORITY}/oauth2/v2.0/token"
+
+# Encryption key for token cache
+_KEY_PATH = str(Path(__file__).parent / ".auth" / ".token_key")
+
+def _get_encryption_key() -> bytes:
+    env_key = os.environ.get("GRAPH_TOKEN_KEY")
+    if env_key:
+        return env_key.encode()
+
+    key_path = Path(_KEY_PATH)
+    if key_path.exists():
+        return key_path.read_bytes().strip()
+
+    try:
+        from cryptography.fernet import Fernet
+        key = Fernet.generate_key()
+        key_path.parent.mkdir(parents=True, exist_ok=True)
+        key_path.write_bytes(key)
+        try:
+            os.chmod(key_path, 0o600)
+        except OSError:
+            pass
+        print(f"[SECURITY] Generated new encryption key: {key_path}", file=sys.stderr)
+        return key
+    except ImportError:
+        print("[SECURITY WARNING] cryptography not installed -- tokens stored unencrypted!", file=sys.stderr)
+        return None
+
+ENCRYPTION_KEY = _get_encryption_key()
