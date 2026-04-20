@@ -202,12 +202,23 @@ class _CallbackHandler(BaseHTTPRequestHandler):
     expected_state: str | None = None
     code_used: bool = False
 
+    def _send_security_headers(self):
+        """Add security headers to all responses."""
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("X-XSS-Protection", "1; mode=block")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
+
     def do_GET(self):
         parsed = urlparse(self.path)
 
         expected_path = urlparse(REDIRECT_URI).path
         if parsed.path != expected_path:
             self.send_response(404)
+            self._send_security_headers()
             self.end_headers()
             self.wfile.write(b"Not found")
             return
@@ -220,14 +231,15 @@ class _CallbackHandler(BaseHTTPRequestHandler):
             log.error("OAuth callback: state mismatch (possible CSRF)")
             _audit("oauth_callback", status="error", reason="state_mismatch")
             self.send_response(403)
+            self._send_security_headers()
             self.send_header("Content-Type", "text/html")
             self.end_headers()
-            self.wfile.write("""
+            self.wfile.write(b"""
                 <html><body style="font-family:system-ui;text-align:center;padding:60px">
                 <h2>Security Error</h2>
                 <p>State parameter mismatch -- possible CSRF attack. Authentication aborted.</p>
                 </body></html>
-            """.encode())
+            """)
             return
 
         if "code" in params:
@@ -237,6 +249,7 @@ class _CallbackHandler(BaseHTTPRequestHandler):
                 log.warning("OAuth callback: auth code already used (possible replay)")
                 _audit("oauth_callback", status="error", reason="code_replay")
                 self.send_response(400)
+                self._send_security_headers()
                 self.end_headers()
                 self.wfile.write(b"Authorization code already used")
                 return
@@ -245,6 +258,7 @@ class _CallbackHandler(BaseHTTPRequestHandler):
             _CallbackHandler.code_used = True
             _audit("oauth_callback", status="success")
             self.send_response(200)
+            self._send_security_headers()
             self.send_header("Content-Type", "text/html")
             self.end_headers()
             self.wfile.write(b"""
@@ -258,6 +272,7 @@ class _CallbackHandler(BaseHTTPRequestHandler):
             _CallbackHandler.auth_error = error_desc
             _audit("oauth_callback", status="error", reason=error_desc[:100])
             self.send_response(400)
+            self._send_security_headers()
             self.send_header("Content-Type", "text/html")
             self.end_headers()
             self.wfile.write(b"""
@@ -268,6 +283,7 @@ class _CallbackHandler(BaseHTTPRequestHandler):
             """)
         else:
             self.send_response(404)
+            self._send_security_headers()
             self.end_headers()
 
     def log_message(self, format, *args):

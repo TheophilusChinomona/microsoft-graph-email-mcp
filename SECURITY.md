@@ -23,8 +23,20 @@ This MCP server implements security hardening at every layer:
 ### Data Protection
 - Tokens encrypted at rest with Fernet (AES)
 - Encryption key stored with 0600 permissions
+- **Encryption is mandatory** — no fallback to unencrypted storage
 - Secure token clearing (overwrite before delete)
 - Error sanitization — no internal details leak to users
+
+### Attachment Security
+- Size limits (10MB default, configurable)
+- **Dangerous file type blocking** — .exe, .bat, .sh, .dll, .ps1, etc. are blocked by default
+- Path traversal protection — saves restricted to `/pentest/results`
+- Strict path validation after `resolve()`
+
+### Search Security
+- Query sanitization — control characters stripped, quotes escaped
+- Query length limits (1000 chars)
+- Folder whitelist enforcement
 
 ### Audit Logging
 - All email operations logged with timestamps

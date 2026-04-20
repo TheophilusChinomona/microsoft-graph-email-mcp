@@ -41,6 +41,7 @@ if not log.handlers:
     ))
     log.addHandler(_handler)
 
+# Audit logger — shared with auth.py via same logger name
 _audit = logging.getLogger("graph-audit")
 _audit.setLevel(logging.INFO)
 _audit_path = Path(__file__).parent / ".auth" / "audit.log"
@@ -49,6 +50,24 @@ if not _audit.handlers:
     _fh = logging.FileHandler(str(_audit_path))
     _fh.setFormatter(logging.Formatter("%(asctime)s | %(message)s"))
     _audit.addHandler(_fh)
+
+# Dangerous file extensions for attachment download
+DANGEROUS_EXTENSIONS = {
+    ".exe", ".bat", ".cmd", ".com", ".msi", ".scr", ".pif",
+    ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh",
+    ".ps1", ".psm1", ".psd1", ".ps1xml",
+    ".sh", ".bash", ".csh", ".ksh",
+    ".dll", ".sys", ".drv",
+    ".elf", ".so", ".dylib",
+}
+
+# Request ID counter for audit trail
+import itertools
+_request_counter = itertools.count(1)
+
+
+def _next_request_id() -> str:
+    return f"req-{next(_request_counter):06d}"
 
 
 mcp = FastMCP("Microsoft Graph Email")
@@ -124,6 +143,26 @@ def _validate_body(body: str) -> str:
     if SCRIPT_PATTERN.search(body):
         log.warning("Email body contains <script> tags")
     return body
+
+
+def _validate_body_type(body_type: str) -> str:
+    """Validate and normalize body type."""
+    if not body_type or not isinstance(body_type, str):
+        return "HTML"
+    normalized = body_type.strip().upper()
+    if normalized not in ("HTML", "TEXT"):
+        return "HTML"
+    return normalized
+
+
+def _sanitize_search_query(query: str) -> str:
+    """Sanitize search query to prevent injection."""
+    # Remove null bytes and control characters
+    query = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", query)
+    # Escape double quotes that could break the $search parameter
+    query = query.replace('"', '\\"')
+    # Truncate to reasonable length
+    return query[:1000]
 
 
 def _sanitize_error(error: Exception, operation: str) -> str:
@@ -412,7 +451,7 @@ def search_messages(query: str, folder: str | None = None, top: int = 10) -> str
     try:
         if not query or not isinstance(query, str):
             raise ValueError("Search query cannot be empty")
-        query = query.strip()[:1000]
+        query = _sanitize_search_query(query)
         top = max(1, min(top, 50))
         if folder:
             folder = _validate_folder(folder)
@@ -471,13 +510,16 @@ def send_email(
         to = _validate_email_list(to)
         subject = _validate_subject(subject)
         body = _validate_body(body)
-        body_type = body_type.upper() if body_type.upper() in ("HTML", "TEXT") else "HTML"
+        body_type = _validate_body_type(body_type)
         if importance not in ("low", "normal", "high"):
             importance = "normal"
         if cc:
             cc = _validate_email_list(cc)
         if bcc:
             bcc = _validate_email_list(bcc)
+
+        req_id = _next_request_id()
+        _audit("send_email_start", req_id=req_id, to_count=len(to), subject=subject[:50])
 
         def _make_recipients(addresses):
             return [{"emailAddress": {"address": addr}} for addr in addresses]
@@ -520,7 +562,7 @@ def reply_to_email(
     try:
         message_id = _validate_message_id(message_id)
         body = _validate_body(body)
-        body_type = body_type.upper() if body_type.upper() in ("HTML", "TEXT") else "HTML"
+        body_type = _validate_body_type(body_type)
         if add_cc:
             add_cc = _validate_email_list(add_cc)
 
@@ -557,7 +599,7 @@ def create_draft(
         to = _validate_email_list(to)
         subject = _validate_subject(subject)
         body = _validate_body(body)
-        body_type = body_type.upper() if body_type.upper() in ("HTML", "TEXT") else "HTML"
+        body_type = _validate_body_type(body_type)
         if cc:
             cc = _validate_email_list(cc)
 
@@ -731,6 +773,15 @@ def get_attachment(message_id: str, attachment_id: str, save_path: str | None = 
         if size > MAX_ATTACHMENT_SIZE:
             result["warning"] = f"Attachment is {size} bytes, exceeds limit of {MAX_ATTACHMENT_SIZE} bytes"
             result["message"] = "Attachment too large to download."
+            return json.dumps(result, indent=2)
+
+        # Block dangerous file extensions
+        att_name = data.get("name", "")
+        att_ext = Path(att_name).suffix.lower()
+        if att_ext in DANGEROUS_EXTENSIONS:
+            result["warning"] = f"Blocked download of dangerous file type: {att_ext}"
+            result["message"] = "This attachment type is blocked for security. Set GRAPH_ALLOW_DANGEROUS=true to override."
+            _audit("attachment_blocked", name=att_name, extension=att_ext)
             return json.dumps(result, indent=2)
 
         if "contentBytes" in data and save_path:
