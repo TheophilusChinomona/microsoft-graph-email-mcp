@@ -1,5 +1,8 @@
 # Auth tokens and keys (NEVER commit these)
 .auth/
+.auth/audit.log
+*.key
+*.pem
 
 # Python
 __pycache__/
@@ -11,6 +14,8 @@ build/
 
 # Environment
 .env
+.env.local
+.env.*.local
 
 # IDE
 .vscode/
@@ -19,3 +24,8 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/

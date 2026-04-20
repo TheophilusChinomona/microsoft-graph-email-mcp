@@ -59,7 +59,11 @@ def _get_encryption_key() -> bytes:
         print(f"[SECURITY] Generated new encryption key: {key_path}", file=sys.stderr)
         return key
     except ImportError:
-        print("[SECURITY WARNING] cryptography not installed -- tokens stored unencrypted!", file=sys.stderr)
-        return None
+        print(
+            "[SECURITY ERROR] 'cryptography' package is required. "
+            "Install it: pip install cryptography",
+            file=sys.stderr
+        )
+        raise SystemExit(1)
 
 ENCRYPTION_KEY = _get_encryption_key()

@@ -64,29 +64,32 @@ def _audit(event: str, **kwargs):
 
 def _encrypt(data: str) -> bytes:
     if not ENCRYPTION_KEY:
-        return data.encode()
+        raise RuntimeError(
+            "Encryption key required for token storage. "
+            "Install 'cryptography' package: pip install cryptography"
+        )
     try:
         from cryptography.fernet import Fernet
         f = Fernet(ENCRYPTION_KEY)
         return f.encrypt(data.encode())
     except Exception as e:
-        log.warning(f"Encryption failed, storing unencrypted: {e}")
-        return data.encode()
+        log.error(f"Encryption failed: {e}")
+        raise RuntimeError(f"Cannot encrypt tokens: {e}") from e
 
 
 def _decrypt(data: bytes) -> str:
     if not ENCRYPTION_KEY:
-        return data.decode()
+        raise RuntimeError(
+            "Encryption key required for token decryption. "
+            "Tokens may have been encrypted with a different key."
+        )
     try:
         from cryptography.fernet import Fernet
         f = Fernet(ENCRYPTION_KEY)
         return f.decrypt(data).decode()
     except Exception as e:
-        log.warning(f"Decryption failed: {e}")
-        try:
-            return data.decode()
-        except Exception:
-            raise ValueError("Cannot decrypt tokens -- key may have changed")
+        log.error(f"Decryption failed: {e}")
+        raise ValueError("Cannot decrypt tokens — key may have changed") from e
 
 
 # PKCE helpers
@@ -358,8 +361,8 @@ def login(open_browser: bool = True) -> dict:
         try:
             webbrowser.open(auth_url)
             print("(Browser should open automatically)")
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug(f"Could not open browser: {e}")
 
     print(f"Waiting for authentication on port {port}...")
     print("(You have 2 minutes to complete sign-in)\n")

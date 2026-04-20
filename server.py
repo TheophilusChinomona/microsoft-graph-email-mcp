@@ -737,8 +737,17 @@ def get_attachment(message_id: str, attachment_id: str, save_path: str | None = 
             import base64
             content = base64.b64decode(data["contentBytes"])
             save_path_obj = Path(save_path).resolve()
-            if ".." in str(save_path):
-                raise ValueError("Path traversal not allowed in save_path")
+
+            # Strict path traversal protection — validate after resolve
+            ALLOWED_BASE = Path("/pentest/results").resolve()
+            try:
+                save_path_obj.relative_to(ALLOWED_BASE)
+            except ValueError:
+                raise ValueError(
+                    f"save_path must be within {ALLOWED_BASE}. "
+                    f"Got: {save_path_obj}"
+                )
+
             save_path_obj.parent.mkdir(parents=True, exist_ok=True)
             save_path_obj.write_bytes(content)
             result["saved_to"] = str(save_path_obj)
