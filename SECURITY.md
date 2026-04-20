@@ -21,6 +21,7 @@ This MCP server has undergone **three independent security hardening passes**:
 - **CSRF protection** via state parameter on OAuth callbacks
 - **Auth code single-use enforcement** — prevents replay attacks
 - **Encrypted token storage** using Fernet (AES-128-CBC) — **mandatory**, no fallback
+- **Device Code flow** — works on remote servers, no browser/localhost needed
 - **GRAPH_BASE_URL validated** against domain allowlist (Microsoft endpoints only)
 - **OAuth error sanitization** — control chars stripped to prevent log injection
 - **Security headers** on OAuth callback (X-Content-Type-Options, X-Frame-Options, CSP, etc.)

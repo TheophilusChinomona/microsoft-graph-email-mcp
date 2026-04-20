@@ -26,7 +26,7 @@ import httpx
 
 from config import (
     CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, SCOPES,
-    AUTHORIZE_URL, TOKEN_URL, TOKEN_CACHE_PATH,
+    AUTHORIZE_URL, DEVICE_CODE_URL, TOKEN_URL, TOKEN_CACHE_PATH,
     ENCRYPTION_KEY, RATE_LIMIT_RETRIES, RATE_LIMIT_BACKOFF_BASE
 )
 
@@ -339,6 +339,123 @@ def _validate_token_scopes(token_response: dict) -> list[str]:
         _audit("scope_warning", missing=",".join(missing))
 
     return list(granted_scopes)
+
+
+# Device Code Flow (works on remote servers — no browser or localhost needed)
+
+def _request_device_code() -> dict:
+    """Request a device code from Microsoft identity platform."""
+    data = {
+        "client_id": CLIENT_ID,
+        "scope": " ".join(SCOPES),
+    }
+    # Confidential client (has secret) includes it
+    if CLIENT_SECRET:
+        data["client_secret"] = CLIENT_SECRET
+
+    with httpx.Client(timeout=30) as client:
+        resp = client.post(DEVICE_CODE_URL, data=data)
+        resp.raise_for_status()
+        return resp.json()
+
+
+def _poll_for_device_token(device_code: str, interval: int, expires_in: int) -> dict:
+    """Poll the token endpoint until user completes device code auth."""
+    data = {
+        "client_id": CLIENT_ID,
+        "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+        "device_code": device_code,
+    }
+    if CLIENT_SECRET:
+        data["client_secret"] = CLIENT_SECRET
+
+    deadline = time.time() + expires_in
+    poll_interval = interval
+
+    with httpx.Client(timeout=30) as client:
+        while time.time() < deadline:
+            try:
+                resp = client.post(TOKEN_URL, data=data)
+                body = resp.json()
+
+                if resp.status_code == 200:
+                    return body
+
+                error = body.get("error", "")
+                if error == "authorization_pending":
+                    # User hasn't authenticated yet — keep polling
+                    time.sleep(poll_interval)
+                    continue
+                elif error == "slow_down":
+                    # Server asked us to slow down
+                    poll_interval += 5
+                    time.sleep(poll_interval)
+                    continue
+                elif error in ("expired_token", "access_denied"):
+                    _audit("device_code_login", status="error", reason=error)
+                    raise RuntimeError(f"Device code auth failed: {error}")
+                else:
+                    _audit("device_code_login", status="error", reason=error)
+                    raise RuntimeError(f"Device code auth error: {error}")
+
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 429:
+                    retry_after = int(e.response.headers.get("Retry-After", 10))
+                    time.sleep(retry_after)
+                    continue
+                raise
+            except httpx.RequestError:
+                time.sleep(poll_interval)
+                continue
+
+    _audit("device_code_login", status="error", reason="timeout")
+    raise RuntimeError("Device code authentication timed out. Please try again.")
+
+
+def login_device_code() -> dict:
+    """
+    Authenticate using OAuth 2.0 Device Code flow.
+
+    Works on remote servers — no browser or localhost callback needed.
+    The user opens https://microsoft.com/devicelogin on any device
+    and enters the displayed code.
+    """
+    if not CLIENT_ID:
+        raise ValueError(
+            "MS_CLIENT_ID environment variable is required. "
+            "Create an app registration at https://portal.azure.com"
+        )
+
+    log.info("Requesting device code...")
+    device_info = _request_device_code()
+
+    user_code = device_info["user_code"]
+    verification_uri = device_info["verification_uri"]
+    device_code = device_info["device_code"]
+    interval = device_info.get("interval", 5)
+    expires_in = device_info.get("expires_in", 900)
+
+    # Print the code and URL for the user
+    print(f"\n{'='*60}")
+    print("Microsoft Graph Email -- Device Code Login")
+    print(f"{'='*60}")
+    print(f"\n  1. Open:  {verification_uri}")
+    print(f"  2. Enter: {user_code}")
+    print(f"\n  Waiting for authentication... (expires in {expires_in}s)\n")
+
+    _audit("device_code_login", status="started", user_code=user_code)
+
+    tokens = _poll_for_device_token(device_code, interval, expires_in)
+
+    granted = _validate_token_scopes(tokens)
+    tokens["_obtained_at"] = time.time()
+    tokens["_granted_scopes"] = granted
+
+    _save_tokens(tokens)
+    _audit("login", status="success", method="device_code", scopes=",".join(granted))
+    print("Authenticated! Tokens encrypted and cached.\n")
+
+    return tokens
 
 
 # Public API

@@ -38,16 +38,25 @@ if GRAPH_BASE_URL not in _ALLOWED_GRAPH_BASES:
 
 # Token cache
 _default_cache = str(Path(__file__).parent / ".auth" / "tokens.json")
-TOKEN_CACHE_PATH = os.environ.get("TOKEN_CACHE_PATH", _default_cache)
+TOKEN_CACHE_PATH = os.environ.get("GRAPH_TOKEN_CACHE_PATH", _default_cache)
 
 # Security settings
 MAX_ATTACHMENT_SIZE = int(os.environ.get("GRAPH_MAX_ATTACHMENT_SIZE", 10 * 1024 * 1024))  # 10MB
 RATE_LIMIT_RETRIES = int(os.environ.get("GRAPH_RATE_LIMIT_RETRIES", 3))
 RATE_LIMIT_BACKOFF_BASE = 2
 
+# Send rate limiting
+MAX_SENDS_PER_MINUTE = int(os.environ.get("GRAPH_MAX_SENDS_PER_MINUTE", 20))
+MAX_SENDS_PER_HOUR = int(os.environ.get("GRAPH_MAX_SENDS_PER_HOUR", 100))
+
+# Attachment settings
+ATTACHMENT_DIR = os.environ.get("GRAPH_ATTACHMENT_DIR", str(Path(__file__).parent / "attachments"))
+ALLOW_DANGEROUS_ATTACHMENTS = os.environ.get("GRAPH_ALLOW_DANGEROUS_ATTACHMENTS", "").lower() == "true"
+
 # OAuth2 endpoints
 AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
 AUTHORIZE_URL = f"{AUTHORITY}/oauth2/v2.0/authorize"
+DEVICE_CODE_URL = f"{AUTHORITY}/oauth2/v2.0/devicecode"
 TOKEN_URL = f"{AUTHORITY}/oauth2/v2.0/token"
 
 # Encryption key for token cache

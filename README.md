@@ -34,9 +34,28 @@ export GRAPH_MAX_SENDS_PER_MINUTE="20"         # Send rate limit
 export GRAPH_MAX_SENDS_PER_HOUR="100"          # Hourly send limit
 export GRAPH_MAX_ATTACHMENT_SIZE="10485760"    # 10MB default
 
-# Test
-python3 test_server.py
+# Start the MCP server
+python3 server.py
 ```
+
+### Login (Device Code — works everywhere)
+
+When you call `graph_login`, the server displays:
+
+```
+============================================================
+Microsoft Graph Email -- Device Code Login
+============================================================
+
+  1. Open:  https://microsoft.com/devicelogin
+  2. Enter: ABCD-1234
+
+  Waiting for authentication... (expires in 900s)
+```
+
+Open the URL on **any device** (phone, laptop, tablet), enter the code, and you're in. No browser, localhost, or SSH tunnel needed on the server.
+
+For local development with a browser, use `graph_login_browser` instead.
 
 ## Azure Setup
 
@@ -50,6 +69,7 @@ python3 test_server.py
 
 | Category | Tools |
 |----------|-------|
+| **Auth** | `graph_login` (device code), `graph_login_browser`, `graph_logout`, `graph_whoami`, `graph_auth_status` |
 | **Read** | `read_emails`, `search_emails`, `get_email_content` |
 | **Send** | `send_email`, `reply_email`, `forward_email` |
 | **Manage** | `list_folders`, `move_email`, `delete_email`, `mark_as_read` |

@@ -27,7 +27,7 @@ from config import (
     RATE_LIMIT_BACKOFF_BASE
 )
 from auth import (
-    login, logout, get_access_token, get_auth_headers,
+    login, login_device_code, logout, get_access_token, get_auth_headers,
     get_user_info, get_granted_scopes
 )
 
@@ -327,8 +327,28 @@ def _graph_request(
 
 @mcp.tool()
 def graph_login() -> str:
-    """Authenticate with Microsoft Graph API. Opens browser for OAuth2 sign-in.
+    """Authenticate with Microsoft Graph using Device Code flow.
+    Works on any server — local or remote. No browser or localhost needed.
+    You'll get a code to enter at https://microsoft.com/devicelogin from any device.
     Run this first before using any email tools. Tokens are encrypted, cached, and auto-refreshed."""
+    try:
+        tokens = login_device_code()
+        user = get_user_info()
+        return json.dumps({
+            "status": "success",
+            "user": user.get("displayName", "Unknown"),
+            "email": user.get("mail") or user.get("userPrincipalName", "Unknown"),
+            "message": "Authentication successful! Tokens encrypted and cached."
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+
+
+@mcp.tool()
+def graph_login_browser() -> str:
+    """Authenticate with Microsoft Graph using browser OAuth flow (localhost only).
+    Use this if you're running the server locally with a browser available.
+    For remote servers, use graph_login (device code) instead."""
     try:
         tokens = login(open_browser=True)
         user = get_user_info()
