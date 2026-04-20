@@ -269,8 +269,11 @@ class _CallbackHandler(BaseHTTPRequestHandler):
             """)
         elif "error" in params:
             error_desc = params.get("error_description", ["Unknown error"])[0]
+            # Sanitize for log injection — strip control characters and newlines
+            import re as _re
+            error_desc = _re.sub(r"[\r\n\x00-\x1f\x7f]", "", error_desc)[:200]
             _CallbackHandler.auth_error = error_desc
-            _audit("oauth_callback", status="error", reason=error_desc[:100])
+            _audit("oauth_callback", status="error", reason=error_desc)
             self.send_response(400)
             self._send_security_headers()
             self.send_header("Content-Type", "text/html")

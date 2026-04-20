@@ -29,14 +29,20 @@ This MCP server implements security hardening at every layer:
 
 ### Attachment Security
 - Size limits (10MB default, configurable)
-- **Dangerous file type blocking** — .exe, .bat, .sh, .dll, .ps1, etc. are blocked by default
-- Path traversal protection — saves restricted to `/pentest/results`
+- **Dangerous file type blocking** — 60+ executable/script types blocked (.exe, .py, .sh, .jar, .svg, .html, etc.)
+- Path traversal protection — saves restricted to configurable directory
 - Strict path validation after `resolve()`
+- Configurable override via `GRAPH_ALLOW_DANGEROUS_ATTACHMENTS=true`
 
 ### Search Security
-- Query sanitization — control characters stripped, quotes escaped
+- Query sanitization — control characters stripped, quotes AND backslashes escaped
 - Query length limits (1000 chars)
-- Folder whitelist enforcement
+- Folder whitelist enforcement (no folder name disclosure on error)
+
+### Send Security
+- **Per-minute rate limiting** (default: 20/min, configurable via `GRAPH_MAX_SENDS_PER_MINUTE`)
+- **Per-hour rate limiting** (default: 100/hour, configurable via `GRAPH_MAX_SENDS_PER_HOUR`)
+- XSS detection in email body (warns on script tags, event handlers, javascript: URIs)
 
 ### Audit Logging
 - All email operations logged with timestamps

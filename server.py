@@ -52,14 +52,70 @@ if not _audit.handlers:
     _audit.addHandler(_fh)
 
 # Dangerous file extensions for attachment download
+# Blocklist approach — comprehensive list of executable/script types
 DANGEROUS_EXTENSIONS = {
-    ".exe", ".bat", ".cmd", ".com", ".msi", ".scr", ".pif",
-    ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh",
-    ".ps1", ".psm1", ".psd1", ".ps1xml",
-    ".sh", ".bash", ".csh", ".ksh",
-    ".dll", ".sys", ".drv",
-    ".elf", ".so", ".dylib",
+    # Windows executables
+    ".exe", ".bat", ".cmd", ".com", ".msi", ".scr", ".pif", ".inf", ".reg",
+    # Windows scripts
+    ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".hta",
+    ".msh", ".msh1", ".msh2", ".mshxml",
+    # PowerShell
+    ".ps1", ".psm1", ".psd1", ".ps1xml", ".pssc",
+    # Unix scripts
+    ".sh", ".bash", ".csh", ".ksh", ".zsh",
+    # Programming languages
+    ".py", ".pyw", ".pyc", ".pyo",
+    ".pl", ".pm", ".rb", ".php", ".php3", ".php4", ".php5", ".phtml",
+    ".java", ".class", ".jar",
+    ".go", ".rs", ".c", ".cpp", ".h",
+    # Shared libraries
+    ".dll", ".sys", ".drv", ".ocx",
+    ".elf", ".so", ".dylib", ".o", ".a",
+    # Markup with executable potential
+    ".svg", ".html", ".htm", ".xhtml", ".xht", ".shtml",
+    # Mobile
+    ".apk", ".ipa", ".xap",
+    # Shortcuts/links
+    ".lnk", ".scf", ".url",
+    # Macro-enabled documents
+    ".docm", ".xlsm", ".pptm", ".dotm", ".xltm", ".potm",
+    # Other dangerous
+    ".iso", ".img", ".vhd", ".vhdx",
 }
+
+# Override via env var (for specialized deployments)
+if os.environ.get("GRAPH_ALLOW_DANGEROUS_ATTACHMENTS", "").lower() == "true":
+    DANGEROUS_EXTENSIONS = set()
+
+# Send rate limiting
+import collections
+_send_timestamps: list[float] = []
+MAX_SENDS_PER_MINUTE = int(os.environ.get("GRAPH_MAX_SENDS_PER_MINUTE", "20"))
+MAX_SENDS_PER_HOUR = int(os.environ.get("GRAPH_MAX_SENDS_PER_HOUR", "100"))
+
+
+def _check_send_rate():
+    """Rate limit send_email to prevent abuse."""
+    import time
+    now = time.time()
+
+    # Clean old timestamps
+    _send_timestamps[:] = [t for t in _send_timestamps if now - t < 3600]
+
+    # Check per-minute limit
+    recent_minute = [t for t in _send_timestamps if now - t < 60]
+    if len(recent_minute) >= MAX_SENDS_PER_MINUTE:
+        raise ValueError(
+            f"Send rate limit exceeded. Max {MAX_SENDS_PER_MINUTE} emails per minute."
+        )
+
+    # Check per-hour limit
+    if len(_send_timestamps) >= MAX_SENDS_PER_HOUR:
+        raise ValueError(
+            f"Hourly send limit exceeded. Max {MAX_SENDS_PER_HOUR} emails per hour."
+        )
+
+    _send_timestamps.append(now)
 
 # Request ID counter for audit trail
 import itertools
@@ -82,8 +138,20 @@ VALID_FOLDERS = {
 }
 
 EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
-MESSAGE_ID_REGEX = re.compile(r"^[A-Za-z0-9+/=_\-]{10,500}$")
+MESSAGE_ID_REGEX = re.compile(r"^[A-Za-z0-9+/=]{10,200}$")
 SCRIPT_PATTERN = re.compile(r"<script[^>]*>.*?</script>", re.IGNORECASE | re.DOTALL)
+# Broader XSS pattern — catches onerror, onload, on*, javascript:, data:
+XSS_PATTERN = re.compile(
+    r"<script|</script|javascript:|data:text/html|on\w+\s*=",
+    re.IGNORECASE
+)
+
+# Attachment save directory — configurable, defaults to user's home
+import os
+ATTACHMENT_DIR = Path(os.environ.get(
+    "GRAPH_ATTACHMENT_DIR",
+    str(Path.home() / ".graph-email" / "attachments")
+)).resolve()
 
 
 def _validate_email(email: str) -> str:
@@ -119,9 +187,7 @@ def _validate_folder(folder: str) -> str:
         raise ValueError("Folder name cannot be empty")
     folder = folder.strip().lower().replace(" ", "")
     if folder not in VALID_FOLDERS:
-        raise ValueError(
-            f"Invalid folder: '{folder}'. Valid folders: {', '.join(sorted(VALID_FOLDERS))}"
-        )
+        raise ValueError("Invalid folder name")
     return folder
 
 
@@ -140,8 +206,8 @@ def _validate_body(body: str) -> str:
         raise ValueError("Body cannot be empty")
     if len(body) > 1_000_000:
         raise ValueError("Email body too large (max 1MB)")
-    if SCRIPT_PATTERN.search(body):
-        log.warning("Email body contains <script> tags")
+    if XSS_PATTERN.search(body):
+        log.warning("Email body contains potentially dangerous HTML patterns")
     return body
 
 
@@ -159,8 +225,10 @@ def _sanitize_search_query(query: str) -> str:
     """Sanitize search query to prevent injection."""
     # Remove null bytes and control characters
     query = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", query)
-    # Escape double quotes that could break the $search parameter
-    query = query.replace('"', '\\"')
+    # Strip leading/trailing whitespace
+    query = query.strip()
+    # Escape quotes and backslashes that could break the $search parameter
+    query = query.replace("\\", "\\\\").replace('"', '\\"')
     # Truncate to reasonable length
     return query[:1000]
 
@@ -519,6 +587,7 @@ def send_email(
             bcc = _validate_email_list(bcc)
 
         req_id = _next_request_id()
+        _check_send_rate()
         _audit("send_email_start", req_id=req_id, to_count=len(to), subject=subject[:50])
 
         def _make_recipients(addresses):
@@ -790,7 +859,7 @@ def get_attachment(message_id: str, attachment_id: str, save_path: str | None = 
             save_path_obj = Path(save_path).resolve()
 
             # Strict path traversal protection — validate after resolve
-            ALLOWED_BASE = Path("/pentest/results").resolve()
+            ALLOWED_BASE = ATTACHMENT_DIR.resolve()
             try:
                 save_path_obj.relative_to(ALLOWED_BASE)
             except ValueError:

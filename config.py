@@ -21,6 +21,21 @@ SCOPES = os.environ.get(
 # Graph API
 GRAPH_BASE_URL = os.environ.get("GRAPH_BASE_URL", "https://graph.microsoft.com/v1.0")
 
+# Validate base URL to prevent SSRF / token exfiltration
+_ALLOWED_GRAPH_BASES = {
+    "https://graph.microsoft.com/v1.0",
+    "https://graph.microsoft.com/beta",
+    "https://graph.microsoft.us/v1.0",  # GCC High
+    "https://dod-graph.microsoft.us/v1.0",  # DoD
+}
+if GRAPH_BASE_URL not in _ALLOWED_GRAPH_BASES:
+    print(
+        f"[SECURITY ERROR] GRAPH_BASE_URL must be one of: {_ALLOWED_GRAPH_BASES}. "
+        f"Got: {GRAPH_BASE_URL}",
+        file=sys.stderr
+    )
+    raise SystemExit(1)
+
 # Token cache
 _default_cache = str(Path(__file__).parent / ".auth" / "tokens.json")
 TOKEN_CACHE_PATH = os.environ.get("TOKEN_CACHE_PATH", _default_cache)
@@ -36,7 +51,8 @@ AUTHORIZE_URL = f"{AUTHORITY}/oauth2/v2.0/authorize"
 TOKEN_URL = f"{AUTHORITY}/oauth2/v2.0/token"
 
 # Encryption key for token cache
-_KEY_PATH = str(Path(__file__).parent / ".auth" / ".token_key")
+# Store key SEPARATELY from tokens to prevent single-point compromise
+_KEY_PATH = str(Path.home() / ".config" / "graph-email" / ".token_key")
 
 def _get_encryption_key() -> bytes:
     env_key = os.environ.get("GRAPH_TOKEN_KEY")
